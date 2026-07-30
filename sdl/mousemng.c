@@ -27,11 +27,11 @@ static void mousecapture(BOOL capture) {
 #else
 		SDL_WM_GrabInput(SDL_GRAB_ON);
 #endif
-		mousemng_hidecursor();
+		mousemng_hidecursor(NULL);
 	}	
 	else
 	{
-		mousemng_showcursor();
+		mousemng_showcursor(NULL);
 #if USE_SDL >= 2
 		SDL_CaptureMouse(FALSE);
 #else

@@ -8,8 +8,12 @@
 
 #if USE_SDL >= 3 
 #include <SDL3_ttf/SDL_ttf.h>
-#elif USE_SDL == 2 
+#elif USE_SDL == 2
+#if defined(__EMSCRIPTEN__)
+#include <SDL2/SDL_ttf.h>
+#else
 #include <SDL2_ttf/SDL_ttf.h>
+#endif
 #elif USE_SDL == 1 
 #include <SDL_ttf/SDL_ttf.h>
 #endif

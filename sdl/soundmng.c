@@ -441,6 +441,11 @@ soundmng_sync(void)
 	struct sndbuf *sndbuf;
 	const SINT32 *pcm;
 
+#if defined(__EMSCRIPTEN__) && USE_SDL == 2
+	/* コールバック直接ミックス方式のためキュー生産は行わない */
+	return;
+#endif
+
 	if (opened) {
 		sounddrv_lock();
 		sndbuf = SNDBUF_FREELIST_FIRST();
@@ -1162,6 +1167,18 @@ sdlaudio_callback(void *userdata, unsigned char *stream, int len)
 #if USE_SDL == 2
 	/* 無音で初期化 */
 	memset(stream, sound_silence, len);
+#endif
+
+#if defined(__EMSCRIPTEN__) && USE_SDL == 2
+	/* libretro同様にコールバック時直接ミックスし、sndbufキュー遅延を排除する */
+	{
+		const SINT32 *pcm = sound_pcmlock();
+		if (pcm) {
+			(*fnmix)((SINT16 *)stream, pcm, (UINT)len);
+			sound_pcmunlock(pcm);
+		}
+	}
+	return;
 #endif
 
 	sndbuf_lock();
