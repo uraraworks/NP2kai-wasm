@@ -67,6 +67,32 @@ EMSCRIPTEN_KEEPALIVE void webnp2_key(int code, int down) {
 	keystat_senddata((REG8)((code & 0x7f) | (down ? 0x00 : 0x80)));
 }
 
+/* Push one entry into the PC-98 keyboard BIOS ring buffer (work area
+   0x502-0x521, head=0x524, tail=0x526, count=0x528 — standard layout,
+   same as bios/bios09.c). entry = (scan << 8) | charcode. This bypasses
+   the keyboard hardware, so host-side IME-composed Shift_JIS bytes can
+   be fed to guest DOS standard input without a guest FEP.
+   Returns 1 when pushed, 0 when the buffer is full (caller retries). */
+EMSCRIPTEN_KEEPALIVE int webnp2_push_key_buffer(int entry) {
+	UINT kbbuftail;
+
+	if (mem[0x528] >= 0x10) {
+		return 0;
+	}
+	mem[0x528]++;
+	kbbuftail = LOADINTELWORD(mem + 0x526);
+	if ((kbbuftail < 0x502) || (kbbuftail >= 0x522)) {
+		kbbuftail = 0x502;
+	}
+	STOREINTELWORD(mem + kbbuftail, (UINT16)entry);
+	kbbuftail += 2;
+	if (kbbuftail >= 0x522) {
+		kbbuftail = 0x502;
+	}
+	STOREINTELWORD(mem + 0x526, kbbuftail);
+	return 1;
+}
+
 /* Text screen (TVRAM) readout for automation.
    The cell addressing (GDC scroll origin + pitch per row) mirrors
    vram/maketext.c so DOS scrolling is followed correctly.
