@@ -109,6 +109,12 @@ static BRESULT sdlaudio_setup(void);
 
 static void PARTSCALL (*fnmix)(SINT16* dst, const SINT32* src, UINT size);
 
+#if defined(__EMSCRIPTEN__) && USE_SDL == 2
+/* 1: JS(AudioWorklet)側が webnp2_audio_render() で直接吸い出す。
+ * SDL(ScriptProcessor)コールバックは無音を返し、二重消費を防ぐ。 */
+static int webnp2_extaudio = 0;
+#endif
+
 #if defined(GCC_CPU_ARCH_IA32)
 void PARTSCALL _saturation_s16(SINT16 *dst, const SINT32 *src, UINT size);
 void PARTSCALL _saturation_s16x(SINT16 *dst, const SINT32 *src, UINT size);
@@ -1171,6 +1177,10 @@ sdlaudio_callback(void *userdata, unsigned char *stream, int len)
 
 #if defined(__EMSCRIPTEN__) && USE_SDL == 2
 	/* libretro同様にコールバック時直接ミックスし、sndbufキュー遅延を排除する */
+	if (webnp2_extaudio) {
+		/* AudioWorklet経路が有効な間は無音のまま返す(ミックスを消費しない) */
+		return;
+	}
 	{
 		const SINT32 *pcm = sound_pcmlock();
 		if (pcm) {
@@ -1263,5 +1273,50 @@ sdlaudio_callback(void *userdata, unsigned char *stream, int len)
 	sndbuf_unlock();
 #endif	/* __LIBRETRO__ */
 }
+
+#if defined(__EMSCRIPTEN__) && USE_SDL == 2
+#include <emscripten.h>
+
+/*
+ * AudioWorklet移行用のJS向け出口。
+ * sound_pcmlock/unlock は1サイクルで sndstream.samples 分を固定消費するため、
+ * JS側は必ず webnp2_audio_chunk_frames() が返すフレーム数単位で吸い出すこと。
+ */
+
+/* 有効化するとSDL(ScriptProcessor)コールバックは無音を返す。 */
+EMSCRIPTEN_KEEPALIVE void webnp2_audio_external(int enable) {
+	webnp2_extaudio = enable ? 1 : 0;
+}
+
+/* コアのサンプリングレート(Hz)。JS側AudioContextはこのレートで作ること。 */
+EMSCRIPTEN_KEEPALIVE int webnp2_audio_rate(void) {
+	return (int)np2cfg.samplingrate;
+}
+
+/* 1回のrenderで得られるフレーム数(ステレオ1組=1フレーム)。0なら音声未初期化。 */
+EMSCRIPTEN_KEEPALIVE int webnp2_audio_chunk_frames(void) {
+	return (int)(opna_frame / (2 * sizeof(SINT16)));
+}
+
+#define WEBNP2_AUDIO_MAX_FRAMES 8192
+static SINT16 webnp2_audio_buf[WEBNP2_AUDIO_MAX_FRAMES * 2];
+
+/* 1チャンク分をs16 interleaved stereoでミックスして内部バッファ先頭を返す。 */
+EMSCRIPTEN_KEEPALIVE SINT16 *webnp2_audio_render(void) {
+	const SINT32 *pcm;
+	UINT bytes = opna_frame;
+
+	if (bytes > sizeof(webnp2_audio_buf)) {
+		bytes = sizeof(webnp2_audio_buf);
+	}
+	memset(webnp2_audio_buf, 0, bytes);
+	pcm = sound_pcmlock();
+	if (pcm) {
+		(*fnmix)(webnp2_audio_buf, pcm, bytes);
+		sound_pcmunlock(pcm);
+	}
+	return webnp2_audio_buf;
+}
+#endif	/* __EMSCRIPTEN__ && USE_SDL == 2 */
 
 #endif	/* !NOSOUND */
