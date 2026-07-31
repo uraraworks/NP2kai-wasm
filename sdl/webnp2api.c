@@ -93,6 +93,19 @@ EMSCRIPTEN_KEEPALIVE int webnp2_push_key_buffer(int entry) {
 	return 1;
 }
 
+/* Push a 2-byte (DBCS) character atomically: both entries are stored in
+   one call so the guest can never consume the lead byte while the trail
+   byte is still missing (which would break Shift_JIS pairing).
+   Returns 1 when pushed, 0 when fewer than 2 slots are free. */
+EMSCRIPTEN_KEEPALIVE int webnp2_push_key_buffer_pair(int e1, int e2) {
+	if (mem[0x528] >= 0x0f) {
+		return 0;
+	}
+	webnp2_push_key_buffer(e1);
+	webnp2_push_key_buffer(e2);
+	return 1;
+}
+
 /* Text screen (TVRAM) readout for automation.
    The cell addressing (GDC scroll origin + pitch per row) mirrors
    vram/maketext.c so DOS scrolling is followed correctly.
