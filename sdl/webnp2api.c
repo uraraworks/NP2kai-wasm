@@ -106,6 +106,58 @@ EMSCRIPTEN_KEEPALIVE int webnp2_push_key_buffer_pair(int e1, int e2) {
 	return 1;
 }
 
+/* Bus-mouse injection for automation.
+
+   The PC-98 bus mouse only reports relative movement, and the guest owns
+   the pointer position, so absolute positioning is done on the JS side by
+   homing into a screen corner first and then stepping to the target.
+   Movement is accumulated in mousemng and drained when the guest polls;
+   webnp2_mouse_pending() lets the caller pace the steps so that a large
+   move is not truncated by the protocol's per-read range.
+
+   These bypass the pointer-lock capture state on purpose: automation must
+   work without the browser holding the real cursor. */
+EMSCRIPTEN_KEEPALIVE void webnp2_mouse_move(int dx, int dy) {
+	mousemng_sync(dx, dy);
+}
+
+EMSCRIPTEN_KEEPALIVE int webnp2_mouse_pending(void) {
+	int	x;
+	int	y;
+
+	x = mousemng.x;
+	y = mousemng.y;
+	if (x < 0) {
+		x = -x;
+	}
+	if (y < 0) {
+		y = -y;
+	}
+	return (x > y) ? x : y;
+}
+
+/* button: 0=left, 1=right. A cleared bit means "pressed". */
+EMSCRIPTEN_KEEPALIVE void webnp2_mouse_button(int button, int down) {
+	UINT8	bit;
+
+	switch (button) {
+		case 0:
+			bit = uPD8255A_LEFTBIT;
+			break;
+		case 1:
+			bit = uPD8255A_RIGHTBIT;
+			break;
+		default:
+			return;
+	}
+	if (down) {
+		mousemng.btn &= ~bit;
+	}
+	else {
+		mousemng.btn |= bit;
+	}
+}
+
 /* Host-side text paste via the guest-resident helper (PASTE.COM).
 
    The TSR keeps a mailbox in conventional memory:
