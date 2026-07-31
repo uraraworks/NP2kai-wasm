@@ -106,6 +106,111 @@ EMSCRIPTEN_KEEPALIVE int webnp2_push_key_buffer_pair(int e1, int e2) {
 	return 1;
 }
 
+/* Host-side text paste via the guest-resident helper (PASTE.COM).
+
+   The TSR keeps a mailbox in conventional memory:
+     +0  'WEBNP2MB'   signature
+     +8  head (word)  read cursor, advanced by the guest
+     +10 tail (word)  write cursor, advanced by the host
+     +12 size (word)  ring buffer size (256)
+     +14 pending(word) 1 while the host is still delivering a line
+     +16 buf[size]
+
+   webnp2_find_mailbox() scans conventional memory for a structurally
+   valid mailbox and returns its linear address, or -1 when the helper
+   is not resident. Only main memory below 640KB is searched, so disk
+   images or other host-side buffers can never produce a false hit. */
+#define	WEBNP2_MB_SIZE		256
+#define	WEBNP2_MB_BUF		18
+#define	WEBNP2_MB_INSTALLED	0x4b57		/* set by the TSR once resident */
+#define	WEBNP2_MB_SIGOFF	0x104		/* signature offset inside the .COM segment */
+
+static BOOL webnp2_mailbox_valid(UINT32 addr) {
+	UINT16	head;
+	UINT16	tail;
+	UINT16	size;
+
+	if (addr + WEBNP2_MB_BUF + WEBNP2_MB_SIZE > 0xa0000) {
+		return FALSE;
+	}
+	if (mem[addr] != 'W' || mem[addr+1] != 'E' || mem[addr+2] != 'B' ||
+		mem[addr+3] != 'N' || mem[addr+4] != 'P' || mem[addr+5] != '2' ||
+		mem[addr+6] != 'M' || mem[addr+7] != 'B') {
+		return FALSE;
+	}
+	head = LOADINTELWORD(mem + addr + 8);
+	tail = LOADINTELWORD(mem + addr + 10);
+	size = LOADINTELWORD(mem + addr + 12);
+	/* The "installed" word is zero in the on-disk PASTE.COM image, so a
+	   stale copy sitting in a DOS disk buffer is rejected here. */
+	if (LOADINTELWORD(mem + addr + 16) != WEBNP2_MB_INSTALLED) {
+		return FALSE;
+	}
+	return (size == WEBNP2_MB_SIZE) && (head < size) && (tail < size);
+}
+
+EMSCRIPTEN_KEEPALIVE int webnp2_find_mailbox(void) {
+	UINT32	addr;
+	UINT16	seg;
+
+	/* The resident copy lives in the segment the INT 21h vector points at,
+	   so look there first: that can never hit a stale disk-buffer copy. */
+	seg = LOADINTELWORD(mem + 0x86);
+	addr = ((UINT32)seg << 4) + WEBNP2_MB_SIGOFF;
+	if (webnp2_mailbox_valid(addr)) {
+		return (int)addr;
+	}
+
+	for (addr = 0; addr < 0xa0000; addr += 2) {
+		if (webnp2_mailbox_valid(addr)) {
+			return (int)addr;
+		}
+	}
+	return -1;
+}
+
+/* Free space in the mailbox ring buffer (one slot is kept empty so that
+   head==tail always means "empty"). */
+EMSCRIPTEN_KEEPALIVE int webnp2_mailbox_space(int addr) {
+	UINT16	head;
+	UINT16	tail;
+	int		used;
+
+	if (addr < 0) {
+		return 0;
+	}
+	head = LOADINTELWORD(mem + addr + 8);
+	tail = LOADINTELWORD(mem + addr + 10);
+	used = (int)tail - (int)head;
+	if (used < 0) {
+		used += WEBNP2_MB_SIZE;
+	}
+	return WEBNP2_MB_SIZE - 1 - used;
+}
+
+/* Set the "host is still delivering a line" flag. */
+EMSCRIPTEN_KEEPALIVE void webnp2_mailbox_pending(int addr, int pending) {
+	if (addr < 0) {
+		return;
+	}
+	STOREINTELWORD(mem + addr + 14, (UINT16)(pending ? 1 : 0));
+}
+
+/* Append one byte to the mailbox. Returns 1 on success, 0 when full. */
+EMSCRIPTEN_KEEPALIVE int webnp2_mailbox_put(int addr, int value) {
+	UINT16	tail;
+	UINT16	next;
+
+	if ((addr < 0) || (webnp2_mailbox_space(addr) <= 0)) {
+		return 0;
+	}
+	tail = LOADINTELWORD(mem + addr + 10);
+	mem[addr + WEBNP2_MB_BUF + tail] = (UINT8)value;
+	next = (UINT16)((tail + 1) % WEBNP2_MB_SIZE);
+	STOREINTELWORD(mem + addr + 10, next);
+	return 1;
+}
+
 /* Text screen (TVRAM) readout for automation.
    The cell addressing (GDC scroll origin + pitch per row) mirrors
    vram/maketext.c so DOS scrolling is followed correctly.
