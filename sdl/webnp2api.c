@@ -9,6 +9,7 @@
 #include	<fdd/diskdrv.h>
 #include	<statsave.h>
 #include	<vram/scrndraw.h>
+#include	"mousemng.h"
 
 EMSCRIPTEN_KEEPALIVE void webnp2_reset(void) {
 	pccore_cfgupdate();
@@ -42,6 +43,19 @@ EMSCRIPTEN_KEEPALIVE int webnp2_statload(const char *path) {
 	ret = statsave_load_d();
 	scrndraw_redraw();		/* the load path does not redraw by itself */
 	return ret;
+}
+
+/* Toggle bus-mouse capture (same as the Ctrl+F12 handler in taskmng.c).
+   Under Emscripten, capturing requests browser pointer lock, so this must be
+   called from within a user gesture (e.g. a click handler on the JS side).
+   Returns the new capture state (1=captured). */
+EMSCRIPTEN_KEEPALIVE int webnp2_mouse_toggle(void) {
+	mousemng_toggle(MOUSEPROC_SYSTEM);
+	return ismouse_captured();
+}
+
+EMSCRIPTEN_KEEPALIVE int webnp2_mouse_captured(void) {
+	return ismouse_captured();
 }
 
 #endif	/* EMSCRIPTEN && !__LIBRETRO__ */
