@@ -352,4 +352,37 @@ EMSCRIPTEN_KEEPALIVE UINT8 *webnp2_read_tvram(void) {
 	return s_tvram;
 }
 
+/* ドライブアクセスランプ用のカウンタ。
+   コア側の通知フック sysmng_fddaccess()/sysmng_hddaccess() から呼ばれる
+   (sdl/sysmng.h で Emscripten のときだけ本関数へ差し替えている)。
+   read/write/readid/writeid のたびに該当ドライブのカウンタを進めるだけで、
+   点灯時間の管理はJS側に任せる(呼ばれた回数ではなく「変化したか」を見る)。 */
+#define	WEBNP2_FDD_MAX		4
+#define	WEBNP2_HDD_SLOT		WEBNP2_FDD_MAX	/* HDDは全ドライブまとめて1つ */
+#define	WEBNP2_ACCESS_MAX	(WEBNP2_FDD_MAX + 1)
+
+static UINT32 s_diskaccess[WEBNP2_ACCESS_MAX];
+
+void webnp2_note_fdd_access(UINT8 drv) {
+	if (drv < WEBNP2_FDD_MAX) {
+		s_diskaccess[drv]++;
+	}
+}
+
+void webnp2_note_hdd_access(UINT8 drv) {
+	(void)drv;			/* WebNP2 は HDD を1台しか載せないためまとめて扱う */
+	s_diskaccess[WEBNP2_HDD_SLOT]++;
+}
+
+/* アクセスカウンタ配列(UINT32 x WEBNP2_ACCESS_MAX)の先頭ポインタ。
+   [0..3]=FDD1..FDD4、[4]=HDD。JS側は前回値との差分で点灯を判断する。 */
+EMSCRIPTEN_KEEPALIVE UINT32 *webnp2_disk_access(void) {
+	return s_diskaccess;
+}
+
+/* webnp2_disk_access() が返す配列の要素数。 */
+EMSCRIPTEN_KEEPALIVE int webnp2_disk_access_count(void) {
+	return WEBNP2_ACCESS_MAX;
+}
+
 #endif	/* EMSCRIPTEN && !__LIBRETRO__ */

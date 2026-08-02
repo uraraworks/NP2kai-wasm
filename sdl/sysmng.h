@@ -48,8 +48,16 @@ void sysmng_deinitialize(void);
 
 void sysmng_update(UINT update);
 void sysmng_cpureset(void);
+#if defined(EMSCRIPTEN) && !defined(__LIBRETRO__)
+/* WebNP2: ドライブアクセスランプ用にアクセス通知を拾う(実体は sdl/webnp2api.c)。 */
+void webnp2_note_fdd_access(UINT8 drv);
+void webnp2_note_hdd_access(UINT8 drv);
+#define	sysmng_fddaccess(a)	webnp2_note_fdd_access((UINT8)(a))
+#define	sysmng_hddaccess(a)	webnp2_note_hdd_access((UINT8)(a))
+#else
 #define	sysmng_fddaccess(a)
 #define	sysmng_hddaccess(a)
+#endif
 void sysmng_updatecaption(UINT8 flag);
 
 #ifdef __cplusplus
