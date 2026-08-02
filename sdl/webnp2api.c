@@ -263,6 +263,17 @@ EMSCRIPTEN_KEEPALIVE int webnp2_mailbox_put(int addr, int value) {
 	return 1;
 }
 
+/* デバッグ/解析用。ホスト側からゲストRAMを直接読むための入口。
+   PC-98 メインRAM(0x200000バイト)の先頭ポインタを返す。 */
+EMSCRIPTEN_KEEPALIVE UINT8 *webnp2_mem_ptr(void) {
+	return mem;
+}
+
+/* デバッグ/解析用。webnp2_mem_ptr() が指すメインRAMのサイズ(バイト数)を返す。 */
+EMSCRIPTEN_KEEPALIVE int webnp2_mem_size(void) {
+	return 0x200000;
+}
+
 /* Text screen (TVRAM) readout for automation.
    The cell addressing (GDC scroll origin + pitch per row) mirrors
    vram/maketext.c so DOS scrolling is followed correctly.
