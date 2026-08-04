@@ -129,6 +129,9 @@ char modulefile[MAX_PATH];
 char draw32bit;
 
 static void np2exec();
+#if defined(EMSCRIPTEN) && !defined(__LIBRETRO__)
+extern int webnp2_dbg_paused(void);
+#endif
 unsigned int np2_main_disk_images_count = 0;
 static unsigned int np2_main_cd_images_count = 0;
 OEMCHAR np2_main_disk_images_paths[50][MAX_PATH] = {0};
@@ -825,6 +828,10 @@ static void np2exec()
 #if defined(EMSCRIPTEN) && !defined(__LIBRETRO__)
 //		emscripten_sleep_with_yield(0);
 		emscripten_sleep(0);
+		if (webnp2_dbg_paused()) {
+			scrnmng_update();
+			continue;
+		}
 #endif
 		if (np2oscfg.NOWAIT) {
 			joymng_sync();

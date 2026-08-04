@@ -13,6 +13,21 @@
 #include	<keystat.h>
 #include	<vram/scrndraw.h>
 #include	"mousemng.h"
+#if defined(CPUCORE_IA32)
+#include	<cpu.h>
+#endif
+
+static int s_dbg_paused;
+
+/* デバッガ用の一時停止状態を設定する。0以外で一時停止する。 */
+EMSCRIPTEN_KEEPALIVE void webnp2_dbg_set_paused(int paused) {
+	s_dbg_paused = paused ? 1 : 0;
+}
+
+/* デバッガ用の一時停止状態を返す。1なら一時停止中。 */
+EMSCRIPTEN_KEEPALIVE int webnp2_dbg_paused(void) {
+	return s_dbg_paused;
+}
 
 EMSCRIPTEN_KEEPALIVE void webnp2_reset(void) {
 	pccore_cfgupdate();
@@ -384,5 +399,203 @@ EMSCRIPTEN_KEEPALIVE UINT32 *webnp2_disk_access(void) {
 EMSCRIPTEN_KEEPALIVE int webnp2_disk_access_count(void) {
 	return WEBNP2_ACCESS_MAX;
 }
+
+#if defined(CPUCORE_IA32)
+
+/* ia32_step() は残クロックが正の間ループするため、-1にして1命令に限定する。
+   例外と割り込みは ia32_step() 内の sigsetjmp 経由で処理させる。 */
+EMSCRIPTEN_KEEPALIVE int webnp2_dbg_step(int count) {
+	int	executed;
+
+	if (!s_dbg_paused || count <= 0) {
+		return 0;
+	}
+	for (executed = 0; executed < count; executed++) {
+		CPU_REMCLOCK = -1;
+		ia32_step();
+	}
+	return executed;
+}
+
+/* UINT32配列のレイアウト:
+   [0]=EAX, [1]=ECX, [2]=EDX, [3]=EBX, [4]=ESP, [5]=EBP,
+   [6]=ESI, [7]=EDI, [8]=EIP, [9]=EFLAGS, [10]=CS, [11]=DS,
+   [12]=ES, [13]=SS, [14]=FS, [15]=GS, [16]=CR0。 */
+#define	WEBNP2_DBG_REGS_COUNT	17
+static UINT32 s_dbg_regs[WEBNP2_DBG_REGS_COUNT];
+
+EMSCRIPTEN_KEEPALIVE int webnp2_dbg_regs_size(void) {
+	return (int)sizeof(s_dbg_regs);
+}
+
+EMSCRIPTEN_KEEPALIVE UINT32 *webnp2_dbg_regs(void) {
+	s_dbg_regs[0] = CPU_EAX;
+	s_dbg_regs[1] = CPU_ECX;
+	s_dbg_regs[2] = CPU_EDX;
+	s_dbg_regs[3] = CPU_EBX;
+	s_dbg_regs[4] = CPU_ESP;
+	s_dbg_regs[5] = CPU_EBP;
+	s_dbg_regs[6] = CPU_ESI;
+	s_dbg_regs[7] = CPU_EDI;
+	s_dbg_regs[8] = CPU_EIP;
+	s_dbg_regs[9] = CPU_EFLAG;
+	s_dbg_regs[10] = CPU_CS;
+	s_dbg_regs[11] = CPU_DS;
+	s_dbg_regs[12] = CPU_ES;
+	s_dbg_regs[13] = CPU_SS;
+	s_dbg_regs[14] = CPU_FS;
+	s_dbg_regs[15] = CPU_GS;
+	s_dbg_regs[16] = CPU_CR0;
+	return s_dbg_regs;
+}
+
+#define	WEBNP2_DBG_DISASM_MAX	128
+#define	WEBNP2_DBG_DISASM_SIZE	(WEBNP2_DBG_DISASM_MAX * 352 + 1)
+static char s_dbg_disasm[WEBNP2_DBG_DISASM_SIZE];
+
+static void webnp2_dbg_append(char **dst, size_t *remain, const char *src) {
+	size_t	len;
+
+	if (*remain <= 1) {
+		return;
+	}
+	len = strlen(src);
+	if (len >= *remain) {
+		len = *remain - 1;
+	}
+	memcpy(*dst, src, len);
+	*dst += len;
+	*remain -= len;
+	**dst = '\0';
+}
+
+static int webnp2_dbg_get_cs_desc(UINT16 seg, descriptor_t *desc) {
+	selector_t	sel;
+
+	if (!CPU_STAT_PM || CPU_STAT_VM86) {
+		*desc = CPU_CS_DESC;
+		desc->valid = 1;
+		desc->p = 1;
+		desc->d = 0;
+		desc->u.seg.segbase = (UINT32)seg << 4;
+		desc->u.seg.limit = 0xffff;
+		return 1;
+	}
+	if (seg == CPU_CS) {
+		*desc = CPU_CS_DESC;
+		return 1;
+	}
+	if (parse_selector(&sel, seg) != 0 || !SEG_IS_VALID(&sel.desc) ||
+		!SEG_IS_PRESENT(&sel.desc) || !SEG_IS_CODE(&sel.desc)) {
+		return 0;
+	}
+	*desc = sel.desc;
+	return 1;
+}
+
+/* 指定した seg:off から最大128命令を逆アセンブルする。
+   戻り値は静的文字列で、各行は「命令長<TAB>16進バイト列<TAB>ニーモニック<LF>」。
+   不正命令は「1<TAB>??<TAB><invalid>」として1バイト進める。 */
+EMSCRIPTEN_KEEPALIVE char *webnp2_dbg_disasm(int seg, int off, int count) {
+	descriptor_t	desc;
+	descriptor_t	old_desc;
+	CPU_INST	old_default;
+	disasm_context_t ctx;
+	UINT32		eip;
+	UINT32		next;
+	char		*p;
+	size_t		remain;
+	char		tmp[32];
+	int		len;
+	int		i;
+
+	s_dbg_disasm[0] = '\0';
+	if (count <= 0 || !webnp2_dbg_get_cs_desc((UINT16)seg, &desc)) {
+		return s_dbg_disasm;
+	}
+	if (count > WEBNP2_DBG_DISASM_MAX) {
+		count = WEBNP2_DBG_DISASM_MAX;
+	}
+
+	old_desc = CPU_CS_DESC;
+	old_default = CPU_STATSAVE.cpu_inst_default;
+	CPU_CS_DESC = desc;
+	CPU_STATSAVE.cpu_inst_default.op_32 = desc.d;
+	CPU_STATSAVE.cpu_inst_default.as_32 = desc.d;
+
+	p = s_dbg_disasm;
+	remain = sizeof(s_dbg_disasm);
+	eip = (UINT32)off;
+	for (i = 0; i < count; i++) {
+		next = eip;
+		if (disasm(&next, &ctx) == 0) {
+			int j;
+
+			len = (int)(next - eip);
+			snprintf(tmp, sizeof(tmp), "%d\t", len);
+			webnp2_dbg_append(&p, &remain, tmp);
+			for (j = 0; j < ctx.nopbytes; j++) {
+				snprintf(tmp, sizeof(tmp), "%02x", ctx.opbyte[j]);
+				webnp2_dbg_append(&p, &remain, tmp);
+			}
+			webnp2_dbg_append(&p, &remain, "\t");
+			webnp2_dbg_append(&p, &remain, ctx.str);
+			webnp2_dbg_append(&p, &remain, "\n");
+			eip = next;
+		}
+		else {
+			webnp2_dbg_append(&p, &remain, "1\t??\t<invalid>\n");
+			eip++;
+		}
+	}
+
+	CPU_CS_DESC = old_desc;
+	CPU_STATSAVE.cpu_inst_default = old_default;
+	return s_dbg_disasm;
+}
+
+#define	WEBNP2_DBG_BP_MAX	8
+typedef struct {
+	UINT16	seg;
+	UINT32	off;
+	int		enabled;
+} WEBNP2_DBG_BP;
+
+static WEBNP2_DBG_BP s_dbg_bp[WEBNP2_DBG_BP_MAX];
+
+/* indexは0..7。範囲外の指定は無視する。 */
+EMSCRIPTEN_KEEPALIVE void webnp2_dbg_set_bp(int index, int seg, int off, int enabled) {
+	if (index < 0 || index >= WEBNP2_DBG_BP_MAX) {
+		return;
+	}
+	s_dbg_bp[index].seg = (UINT16)seg;
+	s_dbg_bp[index].off = (UINT32)off;
+	s_dbg_bp[index].enabled = enabled ? 1 : 0;
+}
+
+/* 1命令ごとに実行後のCS:EIPを照合し、ヒットしたBP indexを返す。
+   一時停止中でない場合、または無ヒットの場合は-1を返す。 */
+EMSCRIPTEN_KEEPALIVE int webnp2_dbg_run_until_bp(int max_steps) {
+	int	index;
+	int	step;
+
+	if (!s_dbg_paused || max_steps <= 0) {
+		return -1;
+	}
+	for (step = 0; step < max_steps; step++) {
+		if (webnp2_dbg_step(1) != 1) {
+			break;
+		}
+		for (index = 0; index < WEBNP2_DBG_BP_MAX; index++) {
+			if (s_dbg_bp[index].enabled && s_dbg_bp[index].seg == CPU_CS &&
+				s_dbg_bp[index].off == CPU_EIP) {
+				return index;
+			}
+		}
+	}
+	return -1;
+}
+
+#endif	/* CPUCORE_IA32 */
 
 #endif	/* EMSCRIPTEN && !__LIBRETRO__ */
