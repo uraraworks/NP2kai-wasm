@@ -15,6 +15,7 @@
 #include	"mousemng.h"
 #if defined(CPUCORE_IA32)
 #include	<cpu.h>
+#include	<generic/unasm.h>
 #endif
 
 static int s_dbg_paused;
@@ -493,20 +494,38 @@ static int webnp2_dbg_get_cs_desc(UINT16 seg, descriptor_t *desc) {
 	return 1;
 }
 
+static void webnp2_dbg_read_code(const descriptor_t *desc, UINT32 off,
+								UINT8 *buf, int size) {
+	UINT32	addr;
+	UINT32	pde;
+	UINT32	pte;
+	int		i;
+
+	for (i = 0; i < size; i++) {
+		addr = desc->u.seg.segbase + off + (UINT32)i;
+		if (CPU_STAT_PAGING) {
+			pde = cpu_memoryread_d(CPU_STAT_PDE_BASE + ((addr >> 20) & 0xffc));
+			pte = cpu_memoryread_d((pde & CPU_PDE_BASEADDR_MASK) +
+								((addr >> 10) & 0xffc));
+			addr = (pte & CPU_PTE_BASEADDR_MASK) + (addr & 0x00000fff);
+		}
+		buf[i] = cpu_memoryread(addr);
+	}
+}
+
 /* 指定した seg:off から最大128命令を逆アセンブルする。
-   戻り値は静的文字列で、各行は「命令長<TAB>16進バイト列<TAB>ニーモニック<LF>」。
+   戻り値は静的文字列で、各行は
+   「命令長<TAB>16進バイト列<TAB>ニーモニックとオペランド<LF>」。
    不正命令は「1<TAB>??<TAB><invalid>」として1バイト進める。 */
 EMSCRIPTEN_KEEPALIVE char *webnp2_dbg_disasm(int seg, int off, int count) {
 	descriptor_t	desc;
-	descriptor_t	old_desc;
-	CPU_INST	old_default;
-	disasm_context_t ctx;
+	_UNASM		una;
+	UINT8		code[16];
 	UINT32		eip;
-	UINT32		next;
 	char		*p;
 	size_t		remain;
 	char		tmp[32];
-	int		len;
+	UINT		len;
 	int		i;
 
 	s_dbg_disasm[0] = '\0';
@@ -517,40 +536,35 @@ EMSCRIPTEN_KEEPALIVE char *webnp2_dbg_disasm(int seg, int off, int count) {
 		count = WEBNP2_DBG_DISASM_MAX;
 	}
 
-	old_desc = CPU_CS_DESC;
-	old_default = CPU_STATSAVE.cpu_inst_default;
-	CPU_CS_DESC = desc;
-	CPU_STATSAVE.cpu_inst_default.op_32 = desc.d;
-	CPU_STATSAVE.cpu_inst_default.as_32 = desc.d;
-
 	p = s_dbg_disasm;
 	remain = sizeof(s_dbg_disasm);
 	eip = (UINT32)off;
 	for (i = 0; i < count; i++) {
-		next = eip;
-		if (disasm(&next, &ctx) == 0) {
+		webnp2_dbg_read_code(&desc, eip, code, sizeof(code));
+		len = unasm(&una, code, sizeof(code), desc.d, eip);
+		if (len > 0) {
 			int j;
 
-			len = (int)(next - eip);
-			snprintf(tmp, sizeof(tmp), "%d\t", len);
+			snprintf(tmp, sizeof(tmp), "%u\t", len);
 			webnp2_dbg_append(&p, &remain, tmp);
-			for (j = 0; j < ctx.nopbytes; j++) {
-				snprintf(tmp, sizeof(tmp), "%02x", ctx.opbyte[j]);
+			for (j = 0; j < (int)len; j++) {
+				snprintf(tmp, sizeof(tmp), "%02x", code[j]);
 				webnp2_dbg_append(&p, &remain, tmp);
 			}
 			webnp2_dbg_append(&p, &remain, "\t");
-			webnp2_dbg_append(&p, &remain, ctx.str);
+			webnp2_dbg_append(&p, &remain, una.mnemonic);
+			if (una.operand[0] != '\0') {
+				webnp2_dbg_append(&p, &remain, " ");
+				webnp2_dbg_append(&p, &remain, una.operand);
+			}
 			webnp2_dbg_append(&p, &remain, "\n");
-			eip = next;
+			eip += len;
 		}
 		else {
 			webnp2_dbg_append(&p, &remain, "1\t??\t<invalid>\n");
 			eip++;
 		}
 	}
-
-	CPU_CS_DESC = old_desc;
-	CPU_STATSAVE.cpu_inst_default = old_default;
 	return s_dbg_disasm;
 }
 
