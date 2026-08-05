@@ -786,6 +786,11 @@ static const INITBL iniitem[] = {
 	{OEMTEXT("memckspd"), INITYPE_UINT8,	&np2cfg.memcheckspeed,	0},
 #endif
 	{OEMTEXT("USERAM_D"), INITYPE_BOOL,	&np2cfg.useram_d,	0},
+#if defined(SUPPORT_PEGC)
+	// PEGC プレーンモード(A8000hプレーンアクセス+ROP)。libretro/GTK2版にしか
+	// 設定経路が無く、SDL版では常にOFFのままだったためキーを追加する。
+	{OEMTEXT("PEGCPLNE"), INITYPE_BOOL,	&np2cfg.usepegcplane,	0},
+#endif
 #if defined(SUPPORT_ASYNC_CPU)
 	{OEMTEXT("ASYNCCPU"), INITYPE_BOOL,	&np2cfg.asynccpu,	0},
 	{OEMTEXT("ASYNCLVL"), INITYPE_UINT8,	&np2cfg.asynclvl,	0},

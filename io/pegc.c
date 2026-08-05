@@ -14,7 +14,21 @@
 
 #ifdef SUPPORT_PEGC
 
-// 
+// A8000h-AFFFFh のプレーンアクセス窓は 32KiB×8プレーン = 256KiB ちょうど、
+// つまり 640x400 の1ページ分しか覆わない。実機はポートA6h(gdcs.access)で
+// どちらのページを触るかを選ぶので、その分のベースアドレスを返す。
+// これを見ていないと描画が常にページ0へ行き、A4hで表示ページを切り替える
+// ダブルバッファのソフトが1フレームおきに空ページを表示して点滅する。
+// B0000h側は (address-0xa8000)*8 が既に 0x40000 以上になるため加算しない。
+static UINT32 pegc_planepagebase(UINT32 address){
+
+	if((address < 0xb0000) && (gdcs.access & 1)){
+		return 0x40000;
+	}
+	return 0;
+}
+
+//
 REG16 MEMCALL pegc_memvgaplane_rd16(UINT32 address){
 	
 	int i,j;
@@ -50,6 +64,7 @@ REG16 MEMCALL pegc_memvgaplane_rd16(UINT32 address){
 	
 	// 画素単位のアドレス計算
 	addr = (address - 0xa8000) * 8;
+	addr += pegc_planepagebase(address);
 	addr += srcbitshift;
 	if(!shiftdir){
 		if(pegc.remain == blocklength + 1){
@@ -168,6 +183,7 @@ void MEMCALL pegc_memvgaplane_wr16(UINT32 address, REG16 value){
 	
 	// 画素単位のアドレス計算
 	addr = (address - 0xa8000) * 8;
+	addr += pegc_planepagebase(address);
 	if(exshiftmode){
 		if(pegc.remain == blocklength + 1){
 			addr += dstbitshift;
