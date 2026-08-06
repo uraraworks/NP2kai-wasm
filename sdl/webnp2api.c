@@ -36,6 +36,17 @@ EMSCRIPTEN_KEEPALIVE void webnp2_reset(void) {
 }
 
 /* drive: 0-3, path: MEMFS path. NULL or "" ejects the disk. */
+/* ドライブが読み書きできる状態かを返す。0なら挿入遅延中。
+   webnp2_set_fdd() の直後は 20 フレーム(約0.4秒)の挿入遅延があり、その間FDCは
+   Not Ready を返す。遅延はエミュレート1フレームごとに減るので、実時間で待っても
+   足りるとは限らない。挿入後すぐアクセスする側はこれで準備完了を待つこと。 */
+EMSCRIPTEN_KEEPALIVE int webnp2_fdd_ready(int drive) {
+	if (drive < 0 || drive >= 4) {
+		return 0;
+	}
+	return diskdrv_isfddready((REG8)drive);
+}
+
 EMSCRIPTEN_KEEPALIVE void webnp2_set_fdd(int drive, const char *path) {
 	if (drive < 0 || drive >= 4) {
 		return;

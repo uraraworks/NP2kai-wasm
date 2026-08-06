@@ -265,6 +265,25 @@ void diskdrv_setfddex(REG8 drv, const OEMCHAR *fname, UINT ftype, int readonly)
 }
 
 /**
+ * ドライブの挿入遅延が残っているかを返す
+ * @param[in] drv ドライブ
+ * @retval 0 まだ挿入遅延中(FDCはNot Readyを返す)
+ * @retval !0 読み書きできる状態
+ * @note diskdrv_setfddex() 直後は DISK_DELAY 分だけ Not Ready になる。
+ *       この遅延は diskdrv_callback() すなわち **エミュレート1フレームごと** に減るため、
+ *       ホスト側が実時間で待っても足りるとは限らない。挿入直後にアクセスする用途では
+ *       これを見て準備完了を待つこと。
+ */
+int diskdrv_isfddready(REG8 drv)
+{
+	if (drv >= 4)
+	{
+		return 0;
+	}
+	return (diskdrv_delay[drv] == 0) ? 1 : 0;
+}
+
+/**
  * Callback
  */
 void diskdrv_callback(void)

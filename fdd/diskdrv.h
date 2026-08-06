@@ -17,6 +17,7 @@ void diskdrv_hddbind(void);
 void diskdrv_readyfddex(REG8 drv, const OEMCHAR *fname, UINT ftype, int readonly);
 void diskdrv_setfddex(REG8 drv, const OEMCHAR *fname, UINT ftype, int readonly);
 void diskdrv_callback(void);
+int diskdrv_isfddready(REG8 drv);
 
 #ifdef __cplusplus
 }
