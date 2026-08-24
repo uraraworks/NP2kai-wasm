@@ -12,6 +12,7 @@
 #include	<statsave.h>
 #include	<keystat.h>
 #include	<vram/scrndraw.h>
+#include	<vram/dispsync.h>
 #include	"mousemng.h"
 #if defined(CPUCORE_IA32)
 #include	<cpu.h>
@@ -305,18 +306,32 @@ EMSCRIPTEN_KEEPALIVE int webnp2_mem_size(void) {
    The cell addressing (GDC scroll origin + pitch per row) mirrors
    vram/maketext.c so DOS scrolling is followed correctly.
 
+   cols/rows follow the current screen mode; they are NOT constants.
+   The guest can switch between 25 lines (16 scanlines per row) and
+   20 lines (20 scanlines per row) via INT 18h AH=0Ah, and cols follows
+   the GDC pitch. Reporting a fixed 80x25 made mode changes invisible to
+   automation and produced wrong measurements, so both are derived here:
+
+     cols = GDC pitch (the row stride in cells; the logical width)
+     rows = active text scanlines / scanlines per row
+            = (dsync.textymax - dsync.text_vbp) / ((CSRFORM & 0x1f) + 1)
+
+   The buffer is sized for the maximum and the cells are packed to the
+   reported cols*rows, so callers must read cols/rows from the header
+   rather than assuming a stride.
+
    Buffer layout (little endian):
-     [0]    cols (80)
-     [1]    rows (25)
+     [0]    cols
+     [1]    rows
      [2..3] cursor cell index as int16 (-1 when hidden/offscreen)
      [4..]  cols*rows cells, 2 bytes each:
               0x0000-0x00FF          ANK (JIS X 0201) code
               hi >= 0x21             JIS X 0208 code (jis1<<8)|jis2;
                                      the right half of a fullwidth char
                                      is emitted as 0x0000 */
-#define	WEBNP2_TVRAM_COLS	80
-#define	WEBNP2_TVRAM_ROWS	25
-static UINT8 s_tvram[4 + WEBNP2_TVRAM_COLS * WEBNP2_TVRAM_ROWS * 2];
+#define	WEBNP2_TVRAM_MAXCOLS	128
+#define	WEBNP2_TVRAM_MAXROWS	64
+static UINT8 s_tvram[4 + WEBNP2_TVRAM_MAXCOLS * WEBNP2_TVRAM_MAXROWS * 2];
 
 EMSCRIPTEN_KEEPALIVE int webnp2_tvram_size(void) {
 	return (int)sizeof(s_tvram);
@@ -324,6 +339,10 @@ EMSCRIPTEN_KEEPALIVE int webnp2_tvram_size(void) {
 
 EMSCRIPTEN_KEEPALIVE UINT8 *webnp2_read_tvram(void) {
 	UINT	pitch;
+	UINT	cols;
+	UINT	rows;
+	UINT	lr;
+	UINT	ylen;
 	UINT	esi;
 	UINT16	csrw;
 	int		cursor;
@@ -333,18 +352,36 @@ EMSCRIPTEN_KEEPALIVE UINT8 *webnp2_read_tvram(void) {
 	int		y;
 
 	pitch = gdc.m.para[GDC_PITCH] & 0xfe;
+	cols = pitch;
+	if (cols == 0) {
+		cols = 1;
+	}
+	if (cols > WEBNP2_TVRAM_MAXCOLS) {
+		cols = WEBNP2_TVRAM_MAXCOLS;
+	}
+	lr = (UINT)(gdc.m.para[GDC_CSRFORM] & 0x1f) + 1;
+	ylen = (dsync.textymax > dsync.text_vbp)
+				? (UINT)(dsync.textymax - dsync.text_vbp) : 0;
+	rows = ylen / lr;
+	if (rows == 0) {
+		rows = 1;
+	}
+	if (rows > WEBNP2_TVRAM_MAXROWS) {
+		rows = WEBNP2_TVRAM_MAXROWS;
+	}
+
 	esi = LOW12(LOADINTELWORD(gdc.m.para + GDC_SCROLL));
 	csrw = LOADINTELWORD(gdc.m.para + GDC_CSRW);
 	curdisp = ((gdc.m.para[GDC_CSRFORM] & 0x80) != 0);
 	cursor = -1;
 	p = s_tvram + 4;
-	for (y = 0; y < WEBNP2_TVRAM_ROWS; y++) {
+	for (y = 0; y < (int)rows; y++) {
 		UINT edi = esi;
 		BOOL kanji2nd = FALSE;
-		for (x = 0; x < WEBNP2_TVRAM_COLS; x++) {
+		for (x = 0; x < (int)cols; x++) {
 			UINT16 out;
 			if ((curdisp) && (edi == csrw)) {
-				cursor = y * WEBNP2_TVRAM_COLS + x;
+				cursor = y * (int)cols + x;
 			}
 			if (kanji2nd) {
 				kanji2nd = FALSE;
@@ -373,8 +410,8 @@ EMSCRIPTEN_KEEPALIVE UINT8 *webnp2_read_tvram(void) {
 		}
 		esi = LOW12(esi + pitch);
 	}
-	s_tvram[0] = WEBNP2_TVRAM_COLS;
-	s_tvram[1] = WEBNP2_TVRAM_ROWS;
+	s_tvram[0] = (UINT8)cols;
+	s_tvram[1] = (UINT8)rows;
 	STOREINTELWORD(s_tvram + 2, (UINT16)cursor);
 	return s_tvram;
 }
