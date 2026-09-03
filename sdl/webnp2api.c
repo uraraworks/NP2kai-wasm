@@ -31,6 +31,20 @@ EMSCRIPTEN_KEEPALIVE int webnp2_dbg_paused(void) {
 	return s_dbg_paused;
 }
 
+/* FDDシーク音のON/OFFを切り替える。
+   MOTOR は fdc.c がシークのたびに参照するため即時反映されるが、
+   MOTORVOL は sound_init() 実行時に pccore.c の fddmtrsnd_initialize が
+   一度だけ読む値。起動時の cfg.Seek_Vol が 0 だとミキサトラック自体が
+   登録されず、後からここで MOTOR を立てても無音のままになる点に注意。 */
+EMSCRIPTEN_KEEPALIVE void webnp2_seeksnd_set(int on) {
+	np2cfg.MOTOR = on ? 1 : 0;
+}
+
+/* FDDシーク音のON/OFF状態を返す。1ならON。 */
+EMSCRIPTEN_KEEPALIVE int webnp2_seeksnd(void) {
+	return np2cfg.MOTOR ? 1 : 0;
+}
+
 EMSCRIPTEN_KEEPALIVE void webnp2_reset(void) {
 	pccore_cfgupdate();
 	pccore_reset();

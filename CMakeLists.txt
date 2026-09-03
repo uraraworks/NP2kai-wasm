@@ -791,7 +791,9 @@ if(CMAKE_CROSSCOMPILING)
 			target_sources(NP2kai_Emscripten_SDL1_base INTERFACE ${NP2kai_SDL_sources} "${CMAKE_CURRENT_SOURCE_DIR}/sdl/em/main.c")
 		elseif(USE_SDL EQUAL 2)
 			add_library(NP2kai_Emscripten_SDL2_base INTERFACE)
-			target_compile_definitions(NP2kai_Emscripten_SDL2_base INTERFACE ${NP2kai_SDL_definitions} "OSLINEBREAK_LF" "SUPPORT_SDL_AUDIO" ${lib_SDL_ttf_definitions} "SUPPORT_NP2_TICKCOUNT")
+			# SUPPORT_SWSEEKSND のみ明示追加: fdd/fdd_mtr.c の埋め込みPCMシーク音を有効化するため。
+			# NP2kai_extra_definitions を丸ごと足すと SUPPORT_NVL_IMAGES 等の想定外機能まで入るので避ける。
+			target_compile_definitions(NP2kai_Emscripten_SDL2_base INTERFACE ${NP2kai_SDL_definitions} "OSLINEBREAK_LF" "SUPPORT_SDL_AUDIO" ${lib_SDL_ttf_definitions} "SUPPORT_NP2_TICKCOUNT" "SUPPORT_SWSEEKSND")
 			target_include_directories(NP2kai_Emscripten_SDL2_base INTERFACE ${NP2kai_Emscripten_include_dirs})
 			target_compile_options(NP2kai_Emscripten_SDL2_base INTERFACE "SHELL:-s USE_SDL=2" "SHELL:-s USE_SDL_TTF=2")
 			target_link_options(NP2kai_Emscripten_SDL2_base INTERFACE "SHELL:-s INITIAL_MEMORY=${NP2kai_Emscripten_MinMemorySize}" "SHELL:-s MAXIMUM_MEMORY=${NP2kai_Emscripten_MaxMemorySize}" "SHELL:-s USE_SDL=2" "SHELL:-s USE_SDL_TTF=2" "SHELL:-s ASSERTIONS=0" "SHELL:-s ALLOW_MEMORY_GROWTH=1" "SHELL:-s ASYNCIFY" "SHELL:-s EXPORTED_RUNTIME_METHODS=ccall,cwrap")
