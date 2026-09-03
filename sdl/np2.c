@@ -829,6 +829,24 @@ static void np2exec()
 //		emscripten_sleep_with_yield(0);
 		emscripten_sleep(0);
 		if (webnp2_dbg_paused()) {
+			/* ポーズ中は pccore_exec() を呼ばないため画面内容は変化しないのに、
+			 * 直前の emscripten_sleep(0) はブラウザに全力で制御を返すだけで
+			 * ほぼ待たない。その結果このループが毎秒約200回転し、そのたびに
+			 * scrnmng_update() で無意味な再描画を行っていた（実測: ポーズ中・
+			 * 前面表示でホストCPU 10.7%、setTimeout(0) 換算で約200回/秒）。
+			 * ここで追加の待ちを入れて再描画頻度を間引く。
+			 *
+			 * 完全に描画を止めない理由: SDL2 の描画先は WebGL であり、
+			 * presentを止めると drawing buffer の内容が保証されなくなる
+			 * （ポーズ中のスクリーンショット取得(readPixels)や再表示が
+			 * 壊れる可能性がある）。そのため「止める」のではなく「間引く」。
+			 *
+			 * 33msを超えない理由: デバッガのステップ実行も同じ
+			 * webnp2_dbg_paused() フラグで止まった状態から行われ、
+			 * ステップ後の画面反映がこの周期に乗る。長くしすぎると
+			 * ステップの手応えが悪化する。33ms は約30fps相当で妥協した値。
+			 */
+			emscripten_sleep(33);
 			scrnmng_update();
 			continue;
 		}
