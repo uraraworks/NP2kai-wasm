@@ -22,6 +22,12 @@
 static int s_dbg_paused;
 static int s_pause_redraw;
 
+/* ポーズ中のループ1周あたりの待ち時間(ms)。長いほどホストCPUは下がるが、
+   デバッガのステップ実行結果が画面に出るまでの遅れもこの周期に乗る。
+   実測(前面表示・ポーズ中のホストCPU): 33ms→4.4% / 200ms→1.9%。
+   既定は33msにしておき、UIから明示的にポーズしたときだけ長くする。 */
+static int s_pause_sleep_ms = 33;
+
 EMSCRIPTEN_KEEPALIVE void webnp2_request_pause_redraw(void);
 
 /* デバッガ用の一時停止状態を設定する。0以外で一時停止する。
@@ -48,6 +54,25 @@ EMSCRIPTEN_KEEPALIVE int webnp2_take_pause_redraw(void) {
 	int	v = s_pause_redraw;
 	s_pause_redraw = 0;
 	return v;
+}
+
+/* ポーズ中のループ待ち時間(ms)をJSから設定する。0〜1000にクランプする。
+   UIから通常ポーズするときは長め（例: 200ms）にしてホストCPUを下げ、
+   デバッガのステップ実行を始めたら webnp2_dbg_step() 側で自動的に
+   33msへ戻す（ステップ結果の反映がもたつかないように）。 */
+EMSCRIPTEN_KEEPALIVE void webnp2_set_pause_sleep_ms(int ms) {
+	if (ms < 0) {
+		ms = 0;
+	}
+	else if (ms > 1000) {
+		ms = 1000;
+	}
+	s_pause_sleep_ms = ms;
+}
+
+/* 現在のポーズ中待ち時間(ms)を返す。np2exec()のポーズ分岐から呼ぶ。 */
+EMSCRIPTEN_KEEPALIVE int webnp2_pause_sleep_ms(void) {
+	return s_pause_sleep_ms;
 }
 
 /* FDDシーク音のON/OFFを切り替える。
@@ -492,6 +517,12 @@ EMSCRIPTEN_KEEPALIVE int webnp2_dbg_step(int count) {
 	if (!s_dbg_paused || count <= 0) {
 		return 0;
 	}
+	/* UIから長め(例: 200ms)にポーズ中の待ち時間を設定していても、
+	   デバッガでステップ実行を始めた以上はステップ結果を素早く
+	   画面に反映したい。そのためここで待ち時間を既定の33msへ戻す。
+	   戻さないと、UI側のポーズ待ち時間設定が残ったまま以降のステップが
+	   もたつく。 */
+	s_pause_sleep_ms = 33;
 	for (executed = 0; executed < count; executed++) {
 		CPU_REMCLOCK = -1;
 		ia32_step();

@@ -132,6 +132,7 @@ static void np2exec();
 #if defined(EMSCRIPTEN) && !defined(__LIBRETRO__)
 extern int webnp2_dbg_paused(void);
 extern int webnp2_take_pause_redraw(void);
+extern int webnp2_pause_sleep_ms(void);
 #endif
 unsigned int np2_main_disk_images_count = 0;
 static unsigned int np2_main_cd_images_count = 0;
@@ -849,13 +850,22 @@ static void np2exec()
 			 * webnp2_request_pause_redraw() が呼ばれ、ここでは
 			 * webnp2_take_pause_redraw() でその要求を1回だけ消費する。
 			 *
-			 * emscripten_sleep(33) はそのまま残す。ステップ実行の反映は
-			 * このポーズループの周期に乗るため、待ち自体をなくすと
-			 * ステップ結果の画面反映が最大で emscripten_sleep(0) の
-			 * 呼び出し頻度（毎秒約200回）まで遅延しうる。33ms は
-			 * 約30fps相当で妥協した値。
+			 * 待ち自体をなくすとステップ結果の画面反映が最大で
+			 * emscripten_sleep(0) の呼び出し頻度（毎秒約200回）まで
+			 * 遅延しうるため、待ちは残す。
+			 *
+			 * この待ち時間(ms)は webnp2_pause_sleep_ms() で可変にした。
+			 * ASYNCIFY は emscripten_sleep のたびに wasm スタックを
+			 * 巻き戻して積み直すため、待ち時間を長くするほどそのコストが
+			 * 減ってホストCPUが下がる（実測、前面表示・ポーズ中:
+			 * 33ms→4.4% / 200ms→1.9%）。ただし長くするほど、デバッガの
+			 * ステップ実行結果が画面に反映されるまでの遅れもこの周期に
+			 * 乗って伸びる。そこで既定は33ms（約30fps相当）のままとし、
+			 * UIから明示的にポーズしたときだけJS側で長め（例: 200ms）に
+			 * 設定できるようにした。デバッガでステップ実行を始めると
+			 * webnp2_dbg_step() 側で自動的に33msへ戻る。
 			 */
-			emscripten_sleep(33);
+			emscripten_sleep(webnp2_pause_sleep_ms());
 			if (webnp2_take_pause_redraw()) {
 				scrnmng_update();
 			}
