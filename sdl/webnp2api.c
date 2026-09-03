@@ -22,19 +22,34 @@
 static int s_dbg_paused;
 static int s_pause_redraw;
 
+/* ポーズ中のループ待ち時間(ms)の既定値。s_pause_sleep_ms の初期化・
+   webnp2_dbg_set_paused()・webnp2_dbg_step() でのリセットの3箇所全てが
+   この定数を参照する（値を散らばらせると片方だけ直して食い違うため）。 */
+#define WEBNP2_PAUSE_SLEEP_DEFAULT_MS	33
+
 /* ポーズ中のループ1周あたりの待ち時間(ms)。長いほどホストCPUは下がるが、
    デバッガのステップ実行結果が画面に出るまでの遅れもこの周期に乗る。
    実測(前面表示・ポーズ中のホストCPU): 33ms→4.4% / 200ms→1.9%。
    既定は33msにしておき、UIから明示的にポーズしたときだけ長くする。 */
-static int s_pause_sleep_ms = 33;
+static int s_pause_sleep_ms = WEBNP2_PAUSE_SLEEP_DEFAULT_MS;
 
 EMSCRIPTEN_KEEPALIVE void webnp2_request_pause_redraw(void);
 
 /* デバッガ用の一時停止状態を設定する。0以外で一時停止する。
-   一時停止に入った瞬間の画面を反映させるため、再描画要求も立てる。 */
+   一時停止に入った瞬間の画面を反映させるため、再描画要求も立てる。
+
+   ここで待ち時間を既定値へ戻すのが重要。「ステップ実行時に戻す」
+   (webnp2_dbg_step() 側) だけでは、UIが200msを指定した後にデバッガの
+   一時停止ボタンで止め直した場合を取りこぼす。その場合まだ一度も
+   ステップしていないので s_pause_sleep_ms が200msのまま残り、最初の
+   ステップの画面反映が最大200ms遅れてしまう。一時停止状態に入る経路を
+   ここに一本化することで、「ツールバー以外から止めたポーズは常に
+   既定値」を構造的に保証する。UI側は必要ならポーズ後に改めて
+   webnp2_set_pause_sleep_ms() で200ms等を明示的に上書きすればよい。 */
 EMSCRIPTEN_KEEPALIVE void webnp2_dbg_set_paused(int paused) {
 	s_dbg_paused = paused ? 1 : 0;
 	if (s_dbg_paused) {
+		s_pause_sleep_ms = WEBNP2_PAUSE_SLEEP_DEFAULT_MS;
 		webnp2_request_pause_redraw();
 	}
 }
@@ -522,7 +537,7 @@ EMSCRIPTEN_KEEPALIVE int webnp2_dbg_step(int count) {
 	   画面に反映したい。そのためここで待ち時間を既定の33msへ戻す。
 	   戻さないと、UI側のポーズ待ち時間設定が残ったまま以降のステップが
 	   もたつく。 */
-	s_pause_sleep_ms = 33;
+	s_pause_sleep_ms = WEBNP2_PAUSE_SLEEP_DEFAULT_MS;
 	for (executed = 0; executed < count; executed++) {
 		CPU_REMCLOCK = -1;
 		ia32_step();
