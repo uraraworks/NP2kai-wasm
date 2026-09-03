@@ -131,6 +131,7 @@ char draw32bit;
 static void np2exec();
 #if defined(EMSCRIPTEN) && !defined(__LIBRETRO__)
 extern int webnp2_dbg_paused(void);
+extern int webnp2_take_pause_redraw(void);
 #endif
 unsigned int np2_main_disk_images_count = 0;
 static unsigned int np2_main_cd_images_count = 0;
@@ -834,20 +835,30 @@ static void np2exec()
 			 * ほぼ待たない。その結果このループが毎秒約200回転し、そのたびに
 			 * scrnmng_update() で無意味な再描画を行っていた（実測: ポーズ中・
 			 * 前面表示でホストCPU 10.7%、setTimeout(0) 換算で約200回/秒）。
-			 * ここで追加の待ちを入れて再描画頻度を間引く。
 			 *
-			 * 完全に描画を止めない理由: SDL2 の描画先は WebGL であり、
-			 * presentを止めると drawing buffer の内容が保証されなくなる
-			 * （ポーズ中のスクリーンショット取得(readPixels)や再表示が
-			 * 壊れる可能性がある）。そのため「止める」のではなく「間引く」。
+			 * 以前はここで scrnmng_update() を毎回呼びつつ待ちだけ入れて
+			 * 「間引く」対応にしていたが、その際のコメントで挙げていた
+			 * 「presentを止めると drawing buffer の内容が保証されなくなる」
+			 * という懸念は誤りだった。実測したところこの canvas の WebGL
+			 * コンテキストは preserveDrawingBuffer: true で生成されており、
+			 * 描画を止めてもバッファの内容は保持される
+			 * （readPixels によるスクリーンショット取得も問題なく動く）。
+			 * そのため今回は「間引く」ではなく「要求があった時だけ描く」
+			 * に変更した。再描画が必要になるのはポーズ突入時とデバッガの
+			 * ステップ実行後だけで、そのタイミングで
+			 * webnp2_request_pause_redraw() が呼ばれ、ここでは
+			 * webnp2_take_pause_redraw() でその要求を1回だけ消費する。
 			 *
-			 * 33msを超えない理由: デバッガのステップ実行も同じ
-			 * webnp2_dbg_paused() フラグで止まった状態から行われ、
-			 * ステップ後の画面反映がこの周期に乗る。長くしすぎると
-			 * ステップの手応えが悪化する。33ms は約30fps相当で妥協した値。
+			 * emscripten_sleep(33) はそのまま残す。ステップ実行の反映は
+			 * このポーズループの周期に乗るため、待ち自体をなくすと
+			 * ステップ結果の画面反映が最大で emscripten_sleep(0) の
+			 * 呼び出し頻度（毎秒約200回）まで遅延しうる。33ms は
+			 * 約30fps相当で妥協した値。
 			 */
 			emscripten_sleep(33);
-			scrnmng_update();
+			if (webnp2_take_pause_redraw()) {
+				scrnmng_update();
+			}
 			continue;
 		}
 #endif

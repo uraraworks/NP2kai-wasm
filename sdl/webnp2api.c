@@ -20,15 +20,34 @@
 #endif
 
 static int s_dbg_paused;
+static int s_pause_redraw;
 
-/* デバッガ用の一時停止状態を設定する。0以外で一時停止する。 */
+EMSCRIPTEN_KEEPALIVE void webnp2_request_pause_redraw(void);
+
+/* デバッガ用の一時停止状態を設定する。0以外で一時停止する。
+   一時停止に入った瞬間の画面を反映させるため、再描画要求も立てる。 */
 EMSCRIPTEN_KEEPALIVE void webnp2_dbg_set_paused(int paused) {
 	s_dbg_paused = paused ? 1 : 0;
+	if (s_dbg_paused) {
+		webnp2_request_pause_redraw();
+	}
 }
 
 /* デバッガ用の一時停止状態を返す。1なら一時停止中。 */
 EMSCRIPTEN_KEEPALIVE int webnp2_dbg_paused(void) {
 	return s_dbg_paused;
+}
+
+/* ポーズ中に1回だけ画面を描き直させる。ポーズ突入時とステップ実行後に立てる。 */
+EMSCRIPTEN_KEEPALIVE void webnp2_request_pause_redraw(void) {
+	s_pause_redraw = 1;
+}
+
+/* 要求を1つ取り出す(取ったらクリア)。np2exec()のポーズ分岐から呼ぶ。 */
+EMSCRIPTEN_KEEPALIVE int webnp2_take_pause_redraw(void) {
+	int	v = s_pause_redraw;
+	s_pause_redraw = 0;
+	return v;
 }
 
 /* FDDシーク音のON/OFFを切り替える。
@@ -476,6 +495,9 @@ EMSCRIPTEN_KEEPALIVE int webnp2_dbg_step(int count) {
 	for (executed = 0; executed < count; executed++) {
 		CPU_REMCLOCK = -1;
 		ia32_step();
+	}
+	if (executed > 0) {
+		webnp2_request_pause_redraw();
 	}
 	return executed;
 }
