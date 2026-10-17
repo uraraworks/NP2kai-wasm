@@ -131,8 +131,12 @@ char draw32bit;
 static void np2exec();
 #if defined(EMSCRIPTEN) && !defined(__LIBRETRO__)
 extern int webnp2_dbg_paused(void);
+unsigned int webnp2_exec_frames = 0;	/* pccore_exec() を呼んだ累計回数 */
+#define	NP2EXEC_FRAME(a)	(webnp2_exec_frames++, pccore_exec(a))
 extern int webnp2_take_pause_redraw(void);
 extern int webnp2_pause_sleep_ms(void);
+#else
+#define	NP2EXEC_FRAME(a)	pccore_exec(a)
 #endif
 unsigned int np2_main_disk_images_count = 0;
 static unsigned int np2_main_cd_images_count = 0;
@@ -874,7 +878,7 @@ static void np2exec()
 #endif
 		if (np2oscfg.NOWAIT) {
 			joymng_sync();
-			pccore_exec(framecnt == 0);
+			NP2EXEC_FRAME(framecnt == 0);
 			if (np2oscfg.DRAW_SKIP) {			// nowait frame skip
 				framecnt++;
 				if (framecnt >= np2oscfg.DRAW_SKIP) {
@@ -891,7 +895,7 @@ static void np2exec()
 		else if (np2oscfg.DRAW_SKIP) {		// frame skip
 			if (framecnt < np2oscfg.DRAW_SKIP) {
 				joymng_sync();
-				pccore_exec(framecnt == 0);
+				NP2EXEC_FRAME(framecnt == 0);
 				framecnt++;
 			}
 			else {
@@ -902,7 +906,7 @@ static void np2exec()
 			if (!waitcnt) {
 				UINT cnt;
 				joymng_sync();
-				pccore_exec(framecnt == 0);
+				NP2EXEC_FRAME(framecnt == 0);
 				framecnt++;
 				cnt = timing_getcount();
 				if (framecnt > cnt) {

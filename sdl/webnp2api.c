@@ -14,6 +14,7 @@
 #include	<vram/scrndraw.h>
 #include	<vram/dispsync.h>
 #include	"mousemng.h"
+#include	<timing.h>
 #if defined(CPUCORE_IA32)
 #include	<cpu.h>
 #include	<generic/unasm.h>
@@ -741,5 +742,17 @@ EMSCRIPTEN_KEEPALIVE int webnp2_dbg_run_until_bp(int max_steps) {
 }
 
 #endif	/* CPUCORE_IA32 */
+
+extern unsigned int webnp2_exec_frames;
+
+/* pccore_exec() を呼んだ累計回数（描画の有無を問わない。ポーズ中は増えない） */
+EMSCRIPTEN_KEEPALIVE unsigned int webnp2_frame_count(void) {
+	return webnp2_exec_frames;
+}
+
+/* 実機の1秒あたりフレーム数 x1000（timing.msstep は 1ms あたりのフレーム数、16bit固定小数） */
+EMSCRIPTEN_KEEPALIVE unsigned int webnp2_frame_hz_x1000(void) {
+	return (unsigned int)(((unsigned long long)timing_getmsstep() * 1000ULL * 1000ULL) >> TIMING_MSSHIFT);
+}
 
 #endif	/* EMSCRIPTEN && !__LIBRETRO__ */
