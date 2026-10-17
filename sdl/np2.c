@@ -135,6 +135,42 @@ unsigned int webnp2_exec_frames = 0;	/* pccore_exec() を呼んだ累計回数 *
 #define	NP2EXEC_FRAME(a)	(webnp2_exec_frames++, pccore_exec(a))
 extern int webnp2_take_pause_redraw(void);
 extern int webnp2_pause_sleep_ms(void);
+#include <emscripten.h>
+#include <emscripten/em_js.h>
+/* 毎フレームの制御返却。emscripten_sleep(0) は setTimeout(0) で実装され、
+ * 入れ子の setTimeout はブラウザが最低4msへ丸めるため、1フレーム(17.7ms)ごとに
+ * 約4msが待ちで消えていた(2026-10-17実測: クロックに依存しない固定費 約4.5ms)。
+ * MessageChannel の postMessage は丸めが無いので、こちらで次のタスクへ返す。
+ * チャネルは毎回作らず globalThis に1つ保持する(未着の resolve は単一変数)。
+ * 注意: EM_ASYNC_JS の本体ではバックスラッシュが失われるので書かない。 */
+EM_ASYNC_JS(void, webnp2_yield_mc, (void), {
+	var g = globalThis;
+	if (!g.__webnp2YieldCh) {
+		var ch = new MessageChannel();
+		g.__webnp2YieldCh = ch;
+		g.__webnp2YieldRes = null;
+		ch.port1.onmessage = function() {
+			var r = g.__webnp2YieldRes;
+			g.__webnp2YieldRes = null;
+			if (r) r();
+		};
+	}
+	await new Promise(function(resolve) {
+		g.__webnp2YieldRes = resolve;
+		g.__webnp2YieldCh.port2.postMessage(0);
+	});
+});
+static int webnp2_yield_mode = 0;	/* 0=MessageChannel(既定) 1=従来の emscripten_sleep(0) */
+EMSCRIPTEN_KEEPALIVE void webnp2_set_yield_mode(int mode) {
+	webnp2_yield_mode = mode;
+}
+static void webnp2_yield(void) {
+	if (webnp2_yield_mode) {
+		emscripten_sleep(0);
+	} else {
+		webnp2_yield_mc();
+	}
+}
 #else
 #define	NP2EXEC_FRAME(a)	pccore_exec(a)
 #endif
@@ -833,7 +869,7 @@ static void np2exec()
 		taskmng_rol();
 #if defined(EMSCRIPTEN) && !defined(__LIBRETRO__)
 //		emscripten_sleep_with_yield(0);
-		emscripten_sleep(0);
+		webnp2_yield();
 		if (webnp2_dbg_paused()) {
 			/* ポーズ中は pccore_exec() を呼ばないため画面内容は変化しないのに、
 			 * 直前の emscripten_sleep(0) はブラウザに全力で制御を返すだけで
