@@ -13,6 +13,7 @@
 #include	<keystat.h>
 #include	<vram/scrndraw.h>
 #include	<vram/dispsync.h>
+#include	"np2.h"
 #include	"mousemng.h"
 #include	<timing.h>
 #if defined(CPUCORE_IA32)
@@ -108,6 +109,22 @@ EMSCRIPTEN_KEEPALIVE int webnp2_seeksnd(void) {
 EMSCRIPTEN_KEEPALIVE void webnp2_reset(void) {
 	pccore_cfgupdate();
 	pccore_reset();
+}
+
+/* 実時間の制限なしで全力実行する(s_NOWAIT)。実行中に切替可。CPUクロック自動判定の測定用。 */
+EMSCRIPTEN_KEEPALIVE void webnp2_set_nowait(int on) {
+	np2oscfg.NOWAIT = on ? 1 : 0;
+}
+
+/* CPUクロック倍率を設定する(1〜CPU_MULTIPLE_MAX)。webnp2_reset() で反映される。 */
+EMSCRIPTEN_KEEPALIVE void webnp2_set_clk_mult(int mult) {
+	if (mult < 1) {
+		mult = 1;
+	}
+	else if (mult > CPU_MULTIPLE_MAX) {
+		mult = CPU_MULTIPLE_MAX;
+	}
+	np2cfg.multiple = (UINT32)mult;
 }
 
 /* drive: 0-3, path: MEMFS path. NULL or "" ejects the disk. */
